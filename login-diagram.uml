@@ -1,0 +1,43 @@
+sequenceDiagram
+    autonumber
+    alt Token je k dispozici
+        NIB->>API: Volání PrivatBanka API\nAuthorization: Bearer <token>
+        alt Odpověď 2xx
+            API-->>NIB: 2xx + data
+        else Odpověď 401
+            API-->>NIB: 401 Unauthorized
+            NIB->>AUTH (/v1/token): DELETE /v1/token\nAuthorization: Bearer <token>
+            AUTH (/v1/token)-->>NIB: 204 (token zneplatněn)
+
+            Note over NIB: Dále stejně jako když token není k dispozici
+            NIB->>AUTH (/v1/token): POST /v1/token (bez code)
+            AUTH (/v1/token)-->>NIB: 401 Unauthorized\nWWW-Authenticate: <login_url>
+            NIB-->>User: Přesměrování na <login_url>
+            User->>OIB: Zadání přihlášení
+            OIB-->>NIB: Frontend callback do nového IB\n(carry code=xyz)
+            NIB->>AUTH (/v1/token): POST /v1/token\npayload: { code: "xyz" }
+            alt Code platný
+                AUTH (/v1/token)-->>NIB: 200 OK\nbody: { token: "..." }
+                NIB->>API: Volání PrivatBanka API\nAuthorization: Bearer <new_token>
+                API-->>NIB: 2xx + data
+            else Code neplatný
+                AUTH (/v1/token)-->>NIB: 401 Unauthorized\nWWW-Authenticate: <login_url>
+                NIB-->>User: Přesměrování na <login_url>
+            end
+        end
+    else Token není k dispozici
+        NIB->>AUTH (/v1/token): POST /v1/token (bez code)
+        AUTH (/v1/token)-->>NIB: 401 Unauthorized\nWWW-Authenticate: <login_url>
+        NIB-->>User: Přesměrování na <login_url>
+        User->>OIB: Zadání přihlášení
+        OIB-->>NIB: Frontend callback do nového IB\n(carry code=xyz)
+        NIB->>AUTH (/v1/token): POST /v1/token\npayload: { code: "xyz" }
+        alt Code platný
+            AUTH (/v1/token)-->>NIB: 200 OK\nbody: { token: "..." }
+            NIB->>API: Volání PrivatBanka API\nAuthorization: Bearer <token>
+            API-->>NIB: 2xx + data
+        else Code neplatný
+            AUTH (/v1/token)-->>NIB: 401 Unauthorized\nWWW-Authenticate: <login_url>
+            NIB-->>User: Přesměrování na <login_url>
+        end
+    end

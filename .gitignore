@@ -1,0 +1,19 @@
+# Logs
+*.log
+Elastic/logs/
+Elastic/logs/api-gw/
+Elastic/logs/sample/
+
+# Archives
+*.zip
+*.7z
+*.tar.gz
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Temp/Cache
+*.tmp
+*.temp
