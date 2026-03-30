@@ -1,9 +1,3 @@
-# Logs
-*.log
-Elastic/logs/
-Elastic/logs/api-gw/
-Elastic/logs/sample/
-
 # Archives
 *.zip
 *.7z
