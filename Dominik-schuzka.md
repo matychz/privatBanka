@@ -11,3 +11,8 @@ co se resi - zadani pro mefid
 ![img_1.png](img_1.png)
 
 
+
+
+
+centris myfid testy
+interni systemy potrebujou neco vyhodnocovat, chtelo se to delat na office line, ale musi to byt na centrisu
