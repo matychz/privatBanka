@@ -1,0 +1,2002 @@
+﻿openapi: 3.0.3
+info:
+  title: Onboarding API
+  version: 12.0.0
+  description: "REST API for online onboarding of a new bank customer (mobile-first, web-ready). Workflow order is strictly enforced by backend; clients may read the current **macro step** via GET /v1/onboarding/{processId}/status (no detailed workflow state is exposed).\n\n## Error codes\nAll error responses follow the same shape:\n\n```json\n{\n  \"code\": \"ONB_PROCESS_NOT_FOUND\",\n  \"message\": \"Onboarding process not found\",\n  \"field\": \"phoneNumber\",\n  \"details\": { \"retryAfterSeconds\": 30 }\n}\n```\n- `code` is stable and machine-readable. **Clients must handle unknown `code` values gracefully** (new codes may be added).\n- `message` is human-readable (may be localized).\n- `field` is optional and used mainly for validation.\n- `details` is optional and may contain additional structured data.\n\nKnown codes (non-exhaustive):\n\n| HTTP | Code | Legacy | Lifecycle | Default message | Notes |\n| --: | --- | --- | --- | --- | --- |\n| 404 | `ONB_PROCESS_NOT_FOUND` | `ERR_301`\
+    \ | active | Onboarding process not found | When `processId` is unknown. |\n| 429 | `ONB_OTP_ATTEMPTS_EXCEEDED` | `ERR_302` | active | OTP attempts exceeded | When the allowed number of OTP entry attempts is exceeded. |\n| 429 | `ONB_OTP_COOLDOWN_ACTIVE` | `ERR_303` | active | OTP cooldown active | When OTP is requested during an active resend cooldown window (applies to SMS only). |\n| 409 | `ONB_INVALID_ONBOARDING_STEP` | `ERR_305` | active | Invalid onboarding step | Returned when onboarding step rules are violated. |\n| 500 | `ONB_ENCRYPTION_KEY_NOT_FOUND` | `ERR_307` | active | Encryption key not found | Missing or unavailable encryption key on the server. |\n| 404 | `ONB_DOCUMENT_NOT_FOUND` | `ERR_308` | active | Onboarding document not found | Unknown `documentId`. |\n| 400 | `ONB_INVALID_FIELD` | â€” | active | Invalid field | Invalid field; `field` specifies which one. Not applied by all APIs for all fields. No exhaustive list available. |\n| 400 | `ONB_FIELD_REQUIRED` | â€” | active | Field is required | Required field missing; `field` specifies which one. Not applied by all APIs for all fields. No exhaustive list available. |\n| 409 | `ONB_USER_ALREADY_EXISTS` | â€” | active | User exists | Existing user can't be onboarded - prevents fail in subsequent core systems. |\n| 409 | `ONB_STEP_NOT_ALLOWED` | â€” |\
+    \ active | Step not allowed (forward-only flow) | Returned when the required onboarding step sequence is not respected. |\n| 410 | `ONB_PROCESS_EXPIRED` | â€” | active | Onboarding process expired | The onboarding process has expired. |\n| 403 | `ONB_PEP_NOT_ALLOWED` | â€” | active | PEP customers are not allowed | Returned when the user declares they are a politically exposed person (PEP). |\n| 400 | `ONB_UNSUPPORTED_COUNTRY` | â€” | active | Country currently not supported | Returned when the user declares they are not CZ or SK. |\n| 503 | `ONBOARDING_DENIED` | â€” | active | Onboarding is currently disabled | Onboarding APIs are disabled server-side (feature flag / maintenance). |\n\n**Lifecycle** values:\n- `active`: in use\n- `deprecated`: still in use, but will be removed; avoid using for new clients\n- `obsolete`: no longer expected to be emitted (kept only for backward compatibility)\n\n"
+servers:
+- url: https://ibank.privatbanka.sk/api
+tags:
+- name: documents
+  description: Contract document generation, download, and signing.
+- name: identity-capture
+  description: Upload ID document images, review extracted data, perform liveness selfie, and obtain final decision (provider-agnostic).
+- name: onboarding
+security:
+- token: []
+paths:
+  /v1/onboarding:
+    post:
+      tags:
+      - onboarding
+      operationId: createOnboardingProcess
+      summary: Create onboarding process
+      description: 'Creates a new onboarding process and returns processId and an onboarding token bound to the processId. All subsequent onboarding operations require {processId} in path and the onboarding token.
+
+        '
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProcessRequest'
+            examples:
+              default:
+                summary: Client context
+                value:
+                  channel: MOBILE
+                  onboardingCountry: CZ
+                  pushIdentifier: d0f1a9b3c4e567890123456789abcdef0123456789abcdef0123456789abcdef
+                  deviceInfo:
+                    platform: IOS
+                    appVersion: 9.0.0
+                    osVersion: '17.3'
+                    language: sk-SK
+                    deviceName: Dominikâ€™s iPhone
+                    deviceModel: iPhone14,3
+                    deviceManufacturer: Apple
+      responses:
+        '201':
+          description: Process created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateProcessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      security: []
+      parameters:
+      - $ref: '#/components/parameters/AcceptLanguage'
+  /v1/onboarding/{processId}/phone:
+    post:
+      tags:
+      - onboarding
+      operationId: submitPhoneNumber
+      summary: Submit phone number and start phone verification OTP
+      description: 'Stores customer''s phone number and (re)starts OTP flow for PHONE_VERIFICATION. Idempotent: repeating the same request for the same processId is safe.
+
+        '
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneNumberSubmitRequest'
+            examples:
+              sample:
+                value:
+                  phoneNumber: '+420777123456'
+      responses:
+        '200':
+          description: Phone stored; OTP initiated (or already active)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpInitiatedStepResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/email:
+    post:
+      tags:
+      - onboarding
+      operationId: submitEmail
+      summary: Submit email address and start email verification OTP
+      description: 'Stores customer''s email, validates uniqueness, and sends a one-time verification code to the provided email address. Until the email OTP is verified, backend will not allow progressing to subsequent onboarding steps.
+
+        Resend is available via POST /api/v1/onboarding/{processId}/otp/resend (resends the most recently issued OTP for the process).'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailSubmitRequest'
+            examples:
+              sample:
+                value:
+                  email: user@example.com
+      responses:
+        '200':
+          description: Email stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpInitiatedStepResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/credentials:
+    post:
+      tags:
+      - onboarding
+      operationId: setCredentials
+      summary: Set authentication credentials
+      description: 'Sets onboarding-created credentials. Must be called in macro step CREDENTIALS_SETUP. Passwords are sensitive: never returned in responses.
+
+
+        After credentials are stored, backend starts BACKGROUND_PROCESSING (downstream SOAP integration). The client polls progress via GET /v1/onboarding/{processId}/status until the step completes and the flow advances to READY_FOR_TOKEN_ACTIVATION.
+
+
+        Username is assigned later (Centris client identification number). Retrieve it via GET /v1/onboarding/{processId}/credentials once available.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CredentialsSetRequest'
+      responses:
+        '200':
+          description: Credentials stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags:
+      - onboarding
+      operationId: getCredentialsUsername
+      summary: Get generated username for login
+      description: After onboarding data is submitted and documents are signed, the backend calls Centris. Centris returns a client identification number that becomes the username for login. Call this endpoint to retrieve the username once it is available.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          $ref: '#/components/responses/CredentialsUsername'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/phone/otp/verify:
+    post:
+      tags:
+      - onboarding
+      operationId: verifyPhoneOtp
+      summary: Verify phone OTP
+      description: Verifies the OTP sent to the customer's phone number. On success, workflow advances.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyRequest'
+            examples:
+              sample:
+                value:
+                  code: '123456'
+      responses:
+        '200':
+          $ref: '#/components/responses/StepCompleted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/otp/resend:
+    post:
+      tags:
+      - otp
+      operationId: resendLastOtp
+      summary: Resend last OTP for process
+      description: Resends the most recently issued OTP for the given processId, regardless of step (e.g., phone verification or contract confirmation).
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: OTP resent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpResendResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/regulatory-documents/{packageVersion}/{documentCode}:
+    get:
+      tags:
+      - onboarding
+      operationId: downloadRegulatoryDocument
+      summary: Downloads regulatory document
+      description: Gets a regulatory document defined by packageVersion returned in createOnboardingProcess and documentCode. This version identifier is later submitted into submitOnboardingData.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - name: packageVersion
+        in: path
+        required: true
+        description: Regulatory statements package version (YYYY-MM).
+        schema:
+          type: string
+          pattern: ^\d{4}-\d{2}$
+          example: 2026-02
+      - name: documentCode
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/RegulatoryDocumentCode'
+      responses:
+        '200':
+          description: Regulatory document PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/data/submit:
+    post:
+      tags:
+      - onboarding
+      operationId: submitOnboardingData
+      summary: Submit collected onboarding data
+      description: 'Submits onboarding data collected and persisted in the app. Backend validates and may forward data to downstream systems. Returns 200 PENDING when waiting for downstream processing.
+
+
+        After successful submission and signing, the backend calls Centris to create/register the client. Centris returns a client identification number that will be used as the username for login and can be obtained via GET /v1/onboarding/{processId}/credentials.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OnboardingDataSubmitRequest'
+            examples:
+              sample:
+                value:
+                  payloadVersion: '1'
+                  data:
+                    biometricDataProcessing: true
+                    plannedInvestmentOverLimit: false
+                    regulatoryStatements:
+                      accepted: true
+                      packageVersion: 2026-01
+                    privacyConsents:
+                      dataProcessing:
+                        accepted: true
+                        version: '3'
+                      marketing:
+                        accepted: false
+                        version: '2'
+                    incomeAndAssets:
+                      version: '1'
+                      occupationCode: INFORMATION_TECHNOLOGY
+                      mainIncomeSourceCodes:
+                      - EMPLOYMENT
+                      - INCOME_FROM_CAPITAL_ASSETS
+                      monthlyIncomeRangeCode: UP_TO_50_000_CZK
+                      savingsAndInvestmentsRangeCode: UP_TO_1_000_000_CZK
+                    productUsage:
+                      version: '1'
+                      usagePurposeCodes:
+                      - CASH_TRANSACTIONS
+                      - DAILY_EXPENSES
+                      paymentCountryGroupCodes:
+                      - INSIDE_EUROPE
+                    declarations:
+                      isPep: false
+                      isPersonWithRelationShip: false
+      responses:
+        '200':
+          $ref: '#/components/responses/StepCompleted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/email/otp/verify:
+    post:
+      tags:
+      - onboarding
+      operationId: verifyEmailOtp
+      summary: Verify email OTP
+      description: Verifies the OTP sent to the customer's email address. On success, workflow advances and subsequent steps become allowed.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyRequest'
+            examples:
+              sample:
+                value:
+                  code: '623023'
+      responses:
+        '200':
+          $ref: '#/components/responses/StepCompleted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/identity/init:
+    post:
+      tags:
+      - identity-capture
+      operationId: initIdentityCapture
+      summary: Initialize identity capture (provider SDK init)
+      description: 'Initializes identity capture using an SDK challenge token produced by the mobile SDK. Backend forwards this to the provider and returns SDK init payload.
+
+
+        ### Retry / new attempt behavior
+
+        This endpoint may be called multiple times while the onboarding process is in the macro step **IDENTITY_CAPTURE**.
+
+        Each call starts a **new identity attempt** (a new provider session) and resets the identity-capture micro-state back to the beginning (awaiting the first required sample).
+
+        Previously uploaded samples from a prior failed attempt are not reused.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityInitRequest'
+      responses:
+        '200':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentitySessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/identity/sample:
+    post:
+      tags:
+      - identity-capture
+      operationId: uploadIdentitySample
+      summary: Upload identity capture sample (front/back/selfie)
+      description: 'Uploads a single identity capture sample.
+
+        The backend enforces strict ordering: DOCUMENT_FRONT â†’ DOCUMENT_BACK â†’ SELFIE.
+
+        Samples are forwarded to the identity provider asynchronously.
+
+
+        ### Mandatory samples and ordering
+
+        All three samples are mandatory for a successful verification: **DOCUMENT_FRONT â†’ DOCUMENT_BACK â†’ SELFIE**.
+
+        If a new identity attempt is started via **POST /v1/onboarding/{processId}/identity/init**, the required ordering resets back to **DOCUMENT_FRONT**.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/IdentitySampleUploadRequest'
+      responses:
+        '202':
+          description: Sample accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentitySampleAcceptedResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/identity/mined-data/confirmation:
+    put:
+      tags:
+      - identity-capture
+      operationId: confirmIdentityMinedData
+      summary: Submit user-confirmed identity attributes
+      description: 'Submits user-confirmed identity attributes (possibly edited) after the mined data was returned by finalize.
+
+        Backend persists the confirmed attributes for use in subsequent onboarding steps.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IdentityMinedDataConfirmationRequest'
+      responses:
+        '200':
+          description: Confirmed identity data stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityMinedDataConfirmationResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/identity/finalize:
+    post:
+      tags:
+      - identity-capture
+      operationId: finalizeIdentityCapture
+      summary: Finalize identity capture and return mined data
+      description: 'Finalizes identity capture after all required samples (front, back, selfie) have been uploaded.
+
+        Returns the provider decision together with mined identity attributes that must be displayed to the user for review/editing.
+
+        The user then submits confirmed identity attributes using the confirmation endpoint.
+
+
+        ### Decision outcomes and retries
+
+        If `decision = APPROVED`, the client must proceed with **PUT /v1/onboarding/{processId}/identity/mined-data/confirmation** to confirm (and optionally edit) mined data. Only after successful confirmation the process may continue to the next macro step.
+
+
+        If `decision = REJECTED`, the **identity attempt** is considered failed (identity micro-state becomes `FAILED`), but the onboarding process remains in macro step **IDENTITY_CAPTURE** and the client may start a new attempt by calling **POST /v1/onboarding/{processId}/identity/init** again.
+
+
+        `FAILED` as a terminal onboarding outcome is reserved for **non-recoverable** provider/backend failures (e.g., terminal provider error). UX guidance like â€ścontact support after N triesâ€ť is app-driven; the backend does not enforce a maximum number of identity attempts.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '200':
+          description: Decision and mined data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityFinalizeStepResponse'
+  /v1/onboarding/{processId}/documents/contracts:
+    post:
+      tags:
+      - documents
+      operationId: registerContract
+      summary: Generate contract document(s)
+      description: 'Generates contract document(s) for the onboarding process and returns their metadata.
+
+        The list supports future scenarios where multiple documents are generated.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '201':
+          description: Document(s) generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterContractResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/documents/contracts/{documentId}:
+    get:
+      tags:
+      - documents
+      operationId: downloadContract
+      summary: Download contract document content
+      description: Downloads the generated contract document content as a PDF.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Identifier of the contract document.
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: Contract PDF
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/documents/contracts/{documentId}/otp/request:
+    post:
+      tags:
+      - documents
+      operationId: requestContractSigningOtp
+      summary: Request OTP for contract signing
+      description: Requests an SMS OTP code for signing the contract document.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Identifier of the contract document.
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '202':
+          description: OTP requested
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/documents/contracts/{documentId}/otp/verify:
+    post:
+      tags:
+      - documents
+      operationId: verifyContractSigningOtp
+      summary: Verify OTP and sign contract
+      description: Verifies the SMS OTP code and signs the contract document.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Identifier of the contract document.
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyRequest'
+      responses:
+        '200':
+          description: Contract signed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/credentials/public-key:
+    get:
+      tags:
+      - onboarding
+      operationId: getCredentialsPublicKey
+      summary: Get public key for encrypting credentials
+      description: 'Returns a public key that the client can use to encrypt sensitive credential fields before submitting them.
+
+        The key is scoped to the onboarding process (processId).'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: Public key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialsPublicKeyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/products:
+    post:
+      tags:
+      - onboarding
+      operationId: submitProductSelection
+      summary: Submit selected products
+      description: 'Stores the user''s selected products. Must be called in macro step PRODUCT_SELECTION. Idempotent: repeating the same request for the same processId is safe.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductSelectionSubmitRequest'
+            examples:
+              sample:
+                value:
+                  products:
+                  - productType: CURRENT_ACCOUNT
+                    currency: CZK
+                  - productType: SAVINGS_ACCOUNT
+                    currency: CZK
+                  - productType: CURRENT_ACCOUNT
+                    currency: EUR
+                  - productType: SAVINGS_ACCOUNT
+                    currency: EUR
+                  - productType: SAVINGS_BONUS
+      responses:
+        '200':
+          description: Product selection stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/status:
+    get:
+      tags:
+      - onboarding
+      operationId: getOnboardingStatus
+      summary: Get onboarding status
+      description: 'Returns the current onboarding **macro step** and its status for the given processId.
+
+
+        The primary intended usage is to detect when **BACKGROUND_PROCESSING** finishes and the flow advances to **READY_FOR_TOKEN_ACTIVATION**, but the response always reflects the current macro step.
+
+
+        The backend does not expose detailed internal workflow state; order is still enforced using 409 StepNotAllowed.'
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: Current step status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StepResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/token/activate:
+    post:
+      tags:
+      - onboarding
+      operationId: activateToken
+      summary: Activate token and finish onboarding
+      description: Activates token in macro step READY_FOR_TOKEN_ACTIVATION and completes the onboarding process.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      responses:
+        '200':
+          description: Token activated; onboarding completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenActivationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/onboarding/{processId}/push-registration:
+    put:
+      tags:
+      - onboarding
+      operationId: registerPushIdentifier
+      summary: Register push identifier
+      description: Registers push identifier for existing onboarding process if needed.
+      parameters:
+      - $ref: '#/components/parameters/ProcessId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/AcceptLanguage'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushRegistrationRequest'
+      responses:
+        '204':
+          description: Push identifier registered.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StepNotAllowed'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+components:
+  securitySchemes:
+    token:
+      type: http
+      scheme: bearer
+  parameters:
+    ProcessId:
+      name: processId
+      in: path
+      required: true
+      schema:
+        type: string
+    AcceptLanguage:
+      name: Accept-Language
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Preferred language for localized error messages and localized document metadata (RFC 9110 / BCP 47).
+      example: cs-CZ
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: Idempotency key for safely retrying write operations.
+  responses:
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            invalidField:
+              value:
+                field: email
+                message: Invalid email format.
+                code: ONB_INVALID_FIELD
+            invalidNationality:
+              value:
+                field: nationality
+                message: Invalid nationality.
+                code: ONB_INVALID_FIELD
+    StepNotAllowed:
+      description: Step not allowed in current workflow order (HTTP 409)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            stepNotAllowed:
+              value:
+                message: This step is not allowed right now.
+                code: ONB_STEP_NOT_ALLOWED
+    Unauthorized:
+      description: Missing/invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Gone:
+      description: Gone (410) â€“ onboarding process expired.
+      content:
+        application/json:
+          schema: &id001
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            processExpired:
+              value:
+                code: ONB_PROCESS_EXPIRED
+                message: Onboarding process expired
+                details:
+                  reason: PROCESS_EXPIRED
+    StepCompleted:
+      description: Step completed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StepResponse'
+    ErrorResponse:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            processNotFound:
+              summary: Onboarding process not found
+              value:
+                code: ONB_PROCESS_NOT_FOUND
+                message: Onboarding process not found
+            otpAttemptsExceeded:
+              summary: Too many OTP attempts
+              value:
+                code: ONB_OTP_ATTEMPTS_EXCEEDED
+                message: OTP attempts exceeded
+            otpCooldownActive:
+              summary: OTP cooldown active
+              value:
+                code: ONB_OTP_COOLDOWN_ACTIVE
+                message: OTP cooldown is active
+                details:
+                  retryAfterSeconds: 30
+            invalidOtp:
+              summary: Invalid OTP
+              value:
+                code: ONB_OTP_INVALID
+                message: Invalid OTP
+            invalidStep:
+              summary: Invalid onboarding step
+              value:
+                code: ONB_INVALID_ONBOARDING_STEP
+                message: Invalid onboarding step
+                details:
+                  expectedStep: PHONE_VERIFICATION
+            encryptionKeyNotFound:
+              summary: Encryption key not found
+              value:
+                code: ONB_ENCRYPTION_KEY_NOT_FOUND
+                message: Encryption key not found
+            documentNotFound:
+              summary: Onboarding document not found
+              value:
+                code: ONB_DOCUMENT_NOT_FOUND
+                message: Onboarding document not found
+            fieldRequired:
+              summary: Required field missing
+              value:
+                code: ONB_FIELD_REQUIRED
+                message: Field is required
+                field: fieldName
+            userAlreadyExists:
+              summary: User already exists
+              value:
+                code: ONB_USER_ALREADY_EXISTS
+                message: User already exists
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            onboardingDenied:
+              value:
+                code: ONBOARDING_DENIED
+                message: Onboarding is currently disabled
+                details:
+                  reason: FEATURE_DISABLED
+    CredentialsUsername:
+      description: Credentials username
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CredentialsUsernameResponse'
+    BadRequest:
+      description: Bad Request (400). See `code` for specifics.
+      content:
+        application/json:
+          schema: *id001
+          examples:
+            invalidField:
+              value:
+                code: ONB_INVALID_FIELD
+                message: Invalid field
+                field: fieldName
+                details:
+                  reason: VALIDATION_FAILED
+            invalidOtp:
+              value:
+                code: ONB_OTP_INVALID
+                message: Invalid OTP
+                details:
+                  reason: OTP_INVALID
+            otpCooldownActive:
+              value:
+                code: ONB_OTP_COOLDOWN_ACTIVE
+                message: OTP cooldown active
+                details:
+                  retryAfterSeconds: 30
+            otpAttemptsExceeded:
+              value:
+                code: ONB_OTP_ATTEMPTS_EXCEEDED
+                message: OTP attempts exceeded
+                details:
+                  retryAfterSeconds: 300
+            fieldRequired:
+              value:
+                code: ONB_FIELD_REQUIRED
+                message: Field is required
+                field: fieldName
+                details:
+                  reason: FIELD_REQUIRED
+    Conflict:
+      description: Conflict (409) â€“ forward-only step order / invalid step.
+      content:
+        application/json:
+          schema: *id001
+          examples:
+            stepNotAllowed:
+              value:
+                code: ONB_STEP_NOT_ALLOWED
+                message: Step not allowed (forward-only flow)
+                details:
+                  reason: STEP_OUT_OF_ORDER
+            invalidOnboardingStep:
+              value:
+                code: ONB_INVALID_ONBOARDING_STEP
+                message: Invalid onboarding step
+                details:
+                  reason: INVALID_STEP
+            userAlreadyExists:
+              value:
+                code: ONB_USER_ALREADY_EXISTS
+                message: User already exists
+  schemas:
+    CreateProcessRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        channel:
+          type: string
+          enum:
+          - MOBILE
+          - WEB
+        onboardingCountry:
+          type: string
+          description: 'Country in which the onboarding process is performed and the customer relationship will be established. This field does not represent the customerâ€™s nationality, citizenship, or residence. Allowed values: CZ, SK.'
+          enum:
+          - CZ
+          - SK
+        pushIdentifier:
+          type: string
+          description: Device push identifier.
+        deviceInfo:
+          $ref: '#/components/schemas/DeviceInfo'
+      description: Optional context to help backend tailor onboarding (non-binding).
+      required:
+      - onboardingCountry
+    DeviceInfo:
+      type: object
+      additionalProperties: false
+      properties:
+        platform:
+          type: string
+          example: IOS
+        appVersion:
+          type: string
+          example: 9.0.0
+        osVersion:
+          type: string
+          example: '17.3'
+        language:
+          type: string
+          example: sk-SK
+        deviceName:
+          type: string
+          example: Dominikâ€™s iPhone
+        deviceModel:
+          type: string
+          example: iPhone14,3
+        deviceManufacturer:
+          type: string
+          example: Apple
+    CreateProcessResponse:
+      type: object
+      required:
+      - processId
+      - token
+      - expiresAt
+      additionalProperties: false
+      properties:
+        processId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+          description: Process expiration timestamp.
+        token:
+          type: string
+          description: Bearer token bound to processId.
+        packageVersion:
+          type: string
+          description: Version of the regulatory statements package (PSI/VOP/SAP) in format YYYY-MM.
+          pattern: ^\d{4}-\d{2}$
+          example: 2026-02
+        zenIdProfile:
+          type: string
+          description: Validator profile to use during onboarding process. If ommited, don't use any.
+      example:
+        processId: 6bb1f55e-7c1a-4bf0-9e7b-9f4f6bc4fd55
+        token: eyJhbGciOi...
+        expiresAt: '2026-01-27T00:00:00Z'
+        packageVersion: 2026-02
+        zenIdProfile: Default
+    StepResponse:
+      type: object
+      required:
+      - step
+      - status
+      additionalProperties: false
+      properties:
+        step:
+          type: string
+          description: Technical step identifier.
+        status:
+          type: string
+          enum:
+          - COMPLETED
+          - PENDING
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Present when status=COMPLETED.
+    ErrorResponse:
+      type: object
+      required:
+      - code
+      - message
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+          nullable: true
+          description: Optional field name that failed validation.
+        message:
+          type: string
+          description: Localized, short message based on Accept-Language.
+        details:
+          type: object
+          nullable: true
+          description: Optional technical details (non-sensitive).
+        code:
+          type: string
+          description: 'Stable, machine-readable error code. Clients must handle unknown codes gracefully (new codes may be added).
+
+
+            Known codes (non-exhaustive):
+
+            - ONB_PROCESS_NOT_FOUND (legacy ERR_301) â€” onboarding process not found
+
+            - ONB_OTP_ATTEMPTS_EXCEEDED (legacy ERR_302) â€” too many OTP attempts
+
+            - ONB_OTP_COOLDOWN_ACTIVE (legacy ERR_303) â€” OTP resend/verify cooldown active
+
+            - ONB_OTP_INVALID (legacy ERR_304) â€” invalid OTP
+
+            - ONB_INVALID_ONBOARDING_STEP (legacy ERR_305) â€” invalid step / step out of order
+
+            - ONB_ENCRYPTION_KEY_NOT_FOUND (legacy ERR_307) â€” server encryption key missing
+
+            - ONB_DOCUMENT_NOT_FOUND (legacy ERR_308) â€” onboarding document not found
+
+
+            - ONB_USER_ALREADY_EXISTS â€” existing user detected
+
+
+            - ONB_FIELD_REQUIRED â€” required field missing'
+    PhoneNumberSubmitRequest:
+      type: object
+      required:
+      - phoneNumber
+      additionalProperties: false
+      properties:
+        phoneNumber:
+          type: string
+          description: International format phone number (E.164-like).
+          example: '+420777123456'
+    EmailSubmitRequest:
+      type: object
+      required:
+      - email
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+      description: Email must be unique in bank systems.
+    OtpPurpose:
+      type: string
+      enum:
+      - PHONE_VERIFICATION
+      - EMAIL_VERIFICATION
+      - DOCUMENT_SIGNING
+    OtpInitiatedStepResponse:
+      allOf:
+      - $ref: '#/components/schemas/StepResponse'
+      - type: object
+        additionalProperties: false
+        required:
+        - otp
+        properties:
+          otp:
+            type: object
+            additionalProperties: false
+            required:
+            - purpose
+            - expiresInSeconds
+            - cooldownSeconds
+            - remainingAttempts
+            properties:
+              purpose:
+                $ref: '#/components/schemas/OtpPurpose'
+              expiresInSeconds:
+                type: integer
+                minimum: 0
+              cooldownSeconds:
+                type: integer
+                minimum: 0
+                nullable: true
+              remainingAttempts:
+                type: integer
+                minimum: 0
+                nullable: true
+    IdentitySessionResponse:
+      type: object
+      required:
+      - sdkInitPayload
+      properties:
+        sdkInitPayload:
+          type: string
+          description: SDK initialization payload (string)
+      additionalProperties: false
+    OtpVerifyRequest:
+      type: object
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          pattern: ^\d{6}$
+          example: '123456'
+      additionalProperties: false
+    OtpResendResponse:
+      type: object
+      required:
+      - expiresInSeconds
+      properties:
+        expiresInSeconds:
+          type: integer
+          minimum: 1
+        cooldownSeconds:
+          type: integer
+          minimum: 0
+        remainingAttempts:
+          type: integer
+          minimum: 0
+      additionalProperties: false
+    RegulatoryDocumentCode:
+      type: string
+      description: Code of the regulatory document.
+      enum:
+      - PSI
+      - VOP
+      - SAP
+    OnboardingDataSubmitRequest:
+      type: object
+      description: Bulk submission of locally persisted onboarding data to the backend. Backend may forward the data to downstream systems.
+      required:
+      - payloadVersion
+      - data
+      additionalProperties: false
+      properties:
+        payloadVersion:
+          type: string
+          description: Client payload version for backward compatibility.
+        data:
+          type: object
+          description: Collected onboarding data.
+          additionalProperties: false
+          properties:
+            biometricDataProcessing:
+              type: boolean
+            plannedInvestmentOverLimit:
+              type: boolean
+              description: True if client plans to invest at or above the configured limit within the next 3 months.
+            regulatoryStatements:
+              type: object
+              required:
+              - accepted
+              - packageVersion
+              additionalProperties: false
+              properties:
+                accepted:
+                  type: boolean
+                packageVersion:
+                  type: string
+            privacyConsents:
+              type: object
+              required:
+              - dataProcessing
+              - marketing
+              additionalProperties: false
+              properties:
+                dataProcessing:
+                  type: object
+                  required:
+                  - accepted
+                  - version
+                  additionalProperties: false
+                  properties:
+                    accepted:
+                      type: boolean
+                    version:
+                      type: string
+                marketing:
+                  type: object
+                  required:
+                  - accepted
+                  - version
+                  additionalProperties: false
+                  properties:
+                    accepted:
+                      type: boolean
+                    version:
+                      type: string
+            incomeAndAssets:
+              type: object
+              required:
+              - version
+              - occupationCode
+              - mainIncomeSourceCodes
+              - monthlyIncomeRangeCode
+              - savingsAndInvestmentsRangeCode
+              additionalProperties: false
+              properties:
+                version:
+                  type: string
+                occupationCode:
+                  $ref: '#/components/schemas/OccupationCode'
+                mainIncomeSourceCodes:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/MainIncomeSourceCode'
+                monthlyIncomeRangeCode:
+                  $ref: '#/components/schemas/MonthlyIncomeRangeCode'
+                savingsAndInvestmentsRangeCode:
+                  $ref: '#/components/schemas/SavingsAndInvestmentsRangeCode'
+            productUsage:
+              type: object
+              required:
+              - version
+              - usagePurposeCodes
+              - paymentCountryGroupCodes
+              additionalProperties: false
+              properties:
+                version:
+                  type: string
+                usagePurposeCodes:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/UsagePurposeCode'
+                paymentCountryGroupCodes:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/PaymentCountryGroupCode'
+            declarations:
+              type: object
+              required:
+              - isPep
+              - isPersonWithRelationship
+              additionalProperties: false
+              properties:
+                isPep:
+                  type: boolean
+                isPersonWithRelationship:
+                  type: boolean
+    IdentityCaptureState:
+      type: string
+      enum:
+      - AWAITING_FRONT
+      - AWAITING_BACK
+      - AWAITING_SELFIE
+      - READY_TO_FINALIZE
+      - AWAITING_DATA_CONFIRMATION
+      - COMPLETED
+      - FAILED
+      description: Backend-enforced micro-state of the identity capture flow.
+    IdentityDecision:
+      type: string
+      description: Final decision of identity verification.
+      enum:
+      - APPROVED
+      - REJECTED
+    IdentitySampleKind:
+      type: string
+      enum:
+      - DOCUMENT_FRONT
+      - DOCUMENT_BACK
+      - SELFIE
+      description: Sample kind. Backend enforces strict ordering.
+    IdentitySampleUploadRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - kind
+      - file
+      properties:
+        kind:
+          $ref: '#/components/schemas/IdentitySampleKind'
+        file:
+          type: string
+          format: binary
+          description: Image for the selected kind.
+    IdentitySampleAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - kind
+      - state
+      properties:
+        kind:
+          $ref: '#/components/schemas/IdentitySampleKind'
+        state:
+          $ref: '#/components/schemas/IdentityCaptureState'
+        acceptedAt:
+          type: string
+          format: date-time
+          nullable: true
+    IdentityInitRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - sdkChallengeToken
+      properties:
+        sdkChallengeToken:
+          type: string
+          description: Challenge token generated by the mobile ZenID SDK (opaque).
+    IdentityMinedDataConfirmationRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - confirmedData
+      properties:
+        confirmedData:
+          $ref: '#/components/schemas/IdentityMinedDataInput'
+          description: User-confirmed identity attributes (may be edited in the client).
+      description: User confirmation of mined identity attributes.
+    IdentityMinedDataConfirmationResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - state
+      properties:
+        state:
+          $ref: '#/components/schemas/IdentityCaptureState'
+      description: Acknowledgement of confirmed identity data.
+    RegisterContractResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - documents
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/OnboardingDocument'
+          minItems: 1
+          description: List of generated documents for the onboarding process.
+      description: Result of generating contract document(s).
+    CredentialsSetRequest:
+      type: object
+      required:
+      - password
+      additionalProperties: false
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+      description: Sets onboarding-created credentials. Username is assigned after data submission when Centris returns the client identification number; use GET /v1/onboarding/{processId}/credentials to retrieve it once available. Password rules are illustrative; align with bank policy.
+    CredentialsPublicKeyResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - publicKey
+      properties:
+        publicKey:
+          type: string
+          description: Public key used to encrypt credentials before submission. Format and algorithm are documented out-of-band.
+    OnboardingDocument:
+      type: object
+      additionalProperties: false
+      required:
+      - documentId
+      - name
+      - fileName
+      - documentHash
+      properties:
+        documentId:
+          type: string
+          description: Identifier of the generated document.
+        name:
+          type: string
+          description: Human-readable document name to show in the UI (e.g., 'RĂˇmcovĂˇ smlouva o produktu').
+        fileName:
+          type: string
+          description: Suggested file name for download (e.g., 'RS_123456789_19700101.pdf').
+        documentHash:
+          type: string
+          description: Hash of the generated document content. The same value is included in the contract-signing authorization SMS.
+      description: Metadata of a generated onboarding document.
+    CredentialsUsernameResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          nullable: true
+          description: Client identification number returned by Centris; used as the username for login.
+    IdentityFinalizeStepResponse:
+      type: object
+      additionalProperties: false
+      description: Result of finalizing identity capture, including workflow step status.
+      required:
+      - decision
+      - minedData
+      - state
+      - step
+      properties:
+        state:
+          $ref: '#/components/schemas/IdentityCaptureState'
+        decision:
+          $ref: '#/components/schemas/IdentityDecision'
+        minedData:
+          $ref: '#/components/schemas/IdentityMinedDataOutput'
+        step:
+          type: string
+          description: Technical step identifier.
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Present when completed.
+    ProductSelectionSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - products
+      properties:
+        products:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ProductSelectionItem'
+      description: Selected products to be created for the customer.
+    ProductSelectionItem:
+      type: object
+      additionalProperties: false
+      required:
+      - productType
+      properties:
+        productType:
+          type: string
+          description: Bank-defined product identifier (not enumerated).
+          example: CURRENT_ACCOUNT
+        currency:
+          type: string
+          nullable: true
+          description: ISO 4217 currency code when applicable.
+          example: CZK
+      description: Single selected product (type + optional currency).
+    TokenActivationResponse:
+      allOf:
+      - $ref: '#/components/schemas/StepResponse'
+      - type: object
+        additionalProperties: false
+        required:
+        - username
+        - activationOtp
+        - activationGuid
+        properties:
+          username:
+            type: string
+            description: Generated username. for login.
+            example: Z1234567
+          activationOtp:
+            type: string
+            description: OTP used for token activation.
+            example: '482913425'
+          activationGuid:
+            type: string
+            description: Activation correlation identifier.
+            example: b3c8d2f1-8d5e-4d1a-9f1a-1b2c3d4e5f6a
+    PushRegistrationRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - pushIdentifier
+      properties:
+        pushIdentifier:
+          type: string
+          description: Registered push identifier.
+          example: d0f1a9b3c4e567890123456789abcdef0123456789abcdef0123456789abcdef
+    IdentityAddressOutput:
+      type: object
+      additionalProperties: false
+      properties:
+        street:
+          type: string
+          description: Street name.
+        buildingNumber:
+          type: string
+          description: House number / descriptive-orientation number (e.g., 257/54). Mapped to StreetNumber in downstream integration.
+        city:
+          type: string
+          description: City or municipality.
+        postalCode:
+          type: string
+          description: Postal code (ZIP).
+      description: Postal address extracted from the identity document. All fields are optional in finalize output.
+    IdentityAddressInput:
+      type: object
+      additionalProperties: false
+      properties:
+        street:
+          type: string
+          description: Street name.
+        buildingNumber:
+          type: string
+          description: House number / descriptive-orientation number (e.g., 257/54). Mapped to StreetNumber in downstream integration.
+        city:
+          type: string
+          description: City or municipality.
+        postalCode:
+          type: string
+          description: Postal code (ZIP).
+      description: Confirmed postal address. All address fields are required. countryRegionId is additionally required when documentCountry = SK.
+      required:
+      - street
+      - buildingNumber
+      - city
+      - postalCode
+    IdentityMinedDataOutput:
+      type: object
+      additionalProperties: false
+      properties:
+        documentNumber:
+          type: string
+          description: Document number (ÄŚĂ­slo dokladu).
+        givenName:
+          type: string
+          description: Given name (JmĂ©no).
+        familyName:
+          type: string
+          description: Family name / surname (PĹ™Ă­jmenĂ­).
+        titleAfter:
+          type: string
+          description: Title after (Titul po).
+        titleBefore:
+          type: string
+          description: Title before (Titul pĹ™ed).
+        birthDate:
+          type: string
+          format: date
+          description: Date of birth (Datum narozenĂ­).
+        birthPlace:
+          type: string
+          description: Place of birth (MĂ­sto narozenĂ­). Raw text from ZenID BirthAddress.Text.
+        documentExpiry:
+          type: string
+          format: date
+          description: Document expiry date (Platnost do).
+        documentCountry:
+          $ref: '#/components/schemas/SupportedCountryCode'
+        birthNumber:
+          type: string
+          description: Birth number / national identifier (RodnĂ© ÄŤĂ­slo).
+        sex:
+          type: string
+          description: Sex (PohlavĂ­).
+        nationality:
+          $ref: '#/components/schemas/SupportedCountryCode'
+        address:
+          $ref: '#/components/schemas/IdentityAddressOutput'
+        birthPlaceCountry:
+          $ref: '#/components/schemas/SupportedCountryCode'
+      description: Identity attributes mined from submitted samples and returned by finalizeIdentityCapture. All fields are optional and the object may be empty.
+    IdentityMinedDataInput:
+      type: object
+      additionalProperties: false
+      properties:
+        documentNumber:
+          type: string
+          description: Document number (ÄŚĂ­slo dokladu).
+        givenName:
+          type: string
+          description: Given name (JmĂ©no).
+        familyName:
+          type: string
+          description: Family name / surname (PĹ™Ă­jmenĂ­).
+        titleAfter:
+          type: string
+          description: Title after (Titul po).
+        titleBefore:
+          type: string
+          description: Title before (Titul pĹ™ed).
+        birthDate:
+          type: string
+          format: date
+          description: Date of birth (Datum narozenĂ­).
+        birthPlace:
+          type: string
+          description: Place of birth (MĂ­sto narozenĂ­). Raw text from ZenID BirthAddress.Text.
+        documentExpiry:
+          type: string
+          format: date
+          description: Document expiry date (Platnost do).
+        documentCountry:
+          $ref: '#/components/schemas/SupportedCountryCode'
+        birthNumber:
+          type: string
+          description: Birth number / national identifier (RodnĂ© ÄŤĂ­slo).
+        sex:
+          type: string
+          description: Sex (PohlavĂ­).
+        nationality:
+          $ref: '#/components/schemas/SupportedCountryCode'
+        address:
+          $ref: '#/components/schemas/IdentityAddressInput'
+        birthPlaceCountry:
+          $ref: '#/components/schemas/SupportedCountryCode'
+      description: User-confirmed identity attributes. All fields are required except sex, titleAfter, and titleBefore. address.countryRegionId is conditionally required when documentCountry = SK.
+      required:
+      - documentNumber
+      - givenName
+      - familyName
+      - birthDate
+      - birthPlace
+      - birthPlaceCountry
+      - documentExpiry
+      - documentCountry
+      - birthNumber
+      - nationality
+      - address
+    OccupationCode:
+      type: string
+      enum:
+      - ADMINISTRATION_ECONOMICS_PUBLIC_SERVICE_LAW
+      - SECURITY_AND_PROTECTION
+      - TOURISM_CULTURE_AND_SERVICES
+      - HEALTHCARE_SOCIAL_CARE_AND_PHARMACEUTICAL_INDUSTRY
+      - MANAGEMENT_AND_BUSINESS
+      - INDUSTRY_AND_MANUFACTURING_AND_LOGISTICS_AND_ENERGY
+      - AGRICULTURE_FORESTRY_AND_CRAFTS
+      - EDUCATION_SCIENCE_AND_RESEARCH
+      - INFORMATION_TECHNOLOGY
+      - STUDENT
+      - RETIREE
+    MainIncomeSourceCode:
+      type: string
+      enum:
+      - EMPLOYMENT
+      - BUSINESS_OR_SELF_EMPLOYMENT
+      - PENSIONS_AND_SOCIAL_BENEFITS
+      - INCOME_FROM_CAPITAL_ASSETS
+      - LOANS
+      - SALE_OF_IMMOVABLE_AND_MOVABLE_PROPERTY
+      - PROPERTY_RENTAL
+      - INHERITANCE
+      - GIFT
+      - OTHER
+    MonthlyIncomeRangeCode:
+      type: string
+      enum:
+      - UP_TO_50_000_CZK
+      - UP_TO_100_000_CZK
+      - ABOVE_100_000_CZK
+    SavingsAndInvestmentsRangeCode:
+      type: string
+      enum:
+      - UP_TO_1_000_000_CZK
+      - UP_TO_10_000_000_CZK
+      - ABOVE_10_000_000_CZK
+    UsagePurposeCode:
+      type: string
+      enum:
+      - INCOME_OPERATIONS
+      - CASH_TRANSACTIONS
+      - DAILY_EXPENSES
+      - CREDIT_PRODUCTS_USAGE
+      - CAPITAL_ACCUMULATION
+    PaymentCountryGroupCode:
+      type: string
+      enum:
+      - INSIDE_EUROPE
+      - OUTSIDE_EUROPE
+    SupportedCountryCode:
+      type: string
+      description: List of supported countries for onboarding process. For value OTHER, ONB_COUNTRY_UNSUPPORTED is returned.
+      enum:
+      - CZ
+      - SK
+      - OTHER
+x-transport-security:
+  mTLS: true
+  notes: Mutual TLS is required at the transport layer.
+x-onboarding-state-machine:
+  macroStates:
+  - CREATED
+  - PHONE_VERIFICATION
+  - EMAIL_VERIFICATION
+  - IDENTITY_CAPTURE
+  - AML_DATA_COLLECTION
+  - AML_SUBMITTED
+  - DOCUMENTS
+  - PRODUCT_SELECTION
+  - CREDENTIALS_SETUP
+  - BACKGROUND_PROCESSING
+  - READY_FOR_TOKEN_ACTIVATION
+  - COMPLETED
+  - REJECTED
+  - FAILED
+  notes:
+  - 'A lightweight status endpoint is exposed: GET /v1/onboarding/{processId}/status returns the current macro step. Backend still enforces order using 409 StepNotAllowed.'
+  - PHONE_VERIFICATION and EMAIL_VERIFICATION allow repeated submission/resend within the same macro state until successful OTP verification.
+  - Identity capture finalize returns decision + mined data; decision/mined-data polling endpoints are not used.
+  - 'Identity capture: the identity attempt (init â†’ sample(s) â†’ finalize) may be repeated any number of times within IDENTITY_CAPTURE until the user confirms mined data via PUT /v1/onboarding/{processId}/identity/mined-data/confirmation.'
+  - PRODUCT_SELECTION stores the user's selected products before credentials are set.
+  - BACKGROUND_PROCESSING is commonly detected by polling GET /v1/onboarding/{processId}/status until it reports completion, after which the flow advances to READY_FOR_TOKEN_ACTIVATION.
+  - READY_FOR_TOKEN_ACTIVATION is finalized via POST /v1/onboarding/{processId}/token/activate which returns activation data and completes the onboarding process.
+x-error-codes:
+- code: ONB_PROCESS_NOT_FOUND
+  legacy: ERR_301
+  httpStatus: 404
+  message: Onboarding process not found
+  lifecycle: active
+  notes: When processId is unknown.
+- code: ONB_OTP_ATTEMPTS_EXCEEDED
+  legacy: ERR_302
+  httpStatus: 429
+  message: OTP attempts exceeded
+  lifecycle: active
+  notes: When the allowed number of OTP entry attempts is exceeded.
+- code: ONB_OTP_COOLDOWN_ACTIVE
+  legacy: ERR_303
+  httpStatus: 429
+  message: OTP cooldown active
+  lifecycle: active
+  notes: When OTP is requested during an active resend cooldown window (SMS only).
+- code: ONB_INVALID_ONBOARDING_STEP
+  legacy: ERR_305
+  httpStatus: 409
+  message: Invalid onboarding step
+  lifecycle: active
+  notes: Returned when onboarding step rules are violated.
+- code: ONB_ENCRYPTION_KEY_NOT_FOUND
+  legacy: ERR_307
+  httpStatus: 500
+  message: Encryption key not found
+  lifecycle: active
+  notes: Missing or unavailable encryption key on the server.
+- code: ONB_DOCUMENT_NOT_FOUND
+  legacy: ERR_308
+  httpStatus: 404
+  message: Onboarding document not found
+  lifecycle: active
+  notes: Unknown documentId.
+- code: ONB_INVALID_FIELD
+  httpStatus: 400
+  message: Invalid field
+  lifecycle: active
+  notes: Invalid field; `field` specifies which. Not applied by all APIs for all fields.
+- code: ONB_STEP_NOT_ALLOWED
+  httpStatus: 409
+  message: Step not allowed (forward-only flow)
+  lifecycle: active
+  notes: Returned when the required onboarding step sequence is not respected.
+- code: ONB_PROCESS_EXPIRED
+  httpStatus: 410
+  message: Onboarding process expired
+  lifecycle: active
+  notes: The onboarding process has expired.
+- code: ONB_PEP_NOT_ALLOWED
+  httpStatus: 403
+  message: PEP customers are not allowed
+  lifecycle: active
+  notes: Returned when the user declares they are a politically exposed person (PEP).
+- code: ONBOARDING_DENIED
+  httpStatus: 503
+  message: Onboarding is currently disabled
+  lifecycle: active
+  notes: Onboarding APIs are disabled server-side (feature flag / maintenance).
+- code: ONB_USER_ALREADY_EXISTS
+  httpStatus: 409
+  message: User already exists
+  lifecycle: active
+  notes: Returned when the submitted identifying data matches an existing user.
+- code: ONB_FIELD_REQUIRED
+  httpStatus: 400
+  message: Field is required
+  lifecycle: active
+  notes: Returned when a required field is missing; field identifies which one.
+- code: ONB_COUNTRY_UNSUPPORTED
+  httpStatus: 400
+  message: Country currently not supported
+  lifecycle: active
+  notes: Returned when the user declares they are not CZ or SK.
+
