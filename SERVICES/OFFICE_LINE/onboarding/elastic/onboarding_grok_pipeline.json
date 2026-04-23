@@ -1,0 +1,172 @@
+{
+  "description": "Pipeline pro parsování onboardingových logů - textová metadata",
+  "processors": [
+    {
+      "grok": {
+        "description": "1. Krok: Základní rozklad logu (Header + Message)",
+        "field": "message",
+        "patterns": [
+          "^(?<temp_timestamp>%{YEAR}-%{MONTHNUM}-%{MONTHDAY} %{TIME})\\s+%{LOGLEVEL:log.level}\\s+%{NUMBER:requestId}\\s+\\[(?<logger>[^\\]]+)\\]\\s+(?<message>.*)$",
+          "%{GREEDYDATA:message}"
+        ],
+        "ignore_failure": true
+      }
+    },
+    {
+      "date": {
+        "description": "2. Krok: Převod času na @timestamp",
+        "field": "temp_timestamp",
+        "formats": [
+          "yyyy-MM-dd HH:mm:ss,SSS"
+        ],
+        "timezone": "Europe/Prague",
+        "target_field": "@timestamp"
+      }
+    },
+    {
+      "grok": {
+        "description": "3. Krok: Extrakce metadat z pole message",
+        "field": "message",
+        "patterns": [
+          "\\|\\s*metadata=(?<metadata_raw>.*)$"
+        ],
+        "ignore_failure": true
+      }
+    },
+    {
+      "trim": {
+        "description": "3c. Krok: Očištění metadat",
+        "field": "metadata_raw",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "kv": {
+        "description": "4. Krok: Parsování metadat (klíč=hodnota) do polí s prefixem onboarding.",
+        "field": "metadata_raw",
+        "field_split": ",",
+        "value_split": "=",
+        "prefix": "onboarding.",
+        "trim_key": " ",
+        "trim_value": " ",
+        "ignore_failure": true,
+        "if": "ctx.metadata_raw != null"
+      }
+    },
+    { "dot_expander": { "field": "onboarding.step", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.substep", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.status", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.processId", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.correlationId", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.duration_ms", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.retry_count", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.attemptsCount", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.ux.os", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.ux.browser", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.ux.app_version", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.ux.language", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.ux.resolution", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.ux.step_duration_sec", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.ux.exit_type", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.client.age_group", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.client.gender", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.client.nationality", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.device", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.error_code", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.error_detail", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.http_status", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.zenid.confidenceScore", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.zenid.livenessScore", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.zenid.ocrMatch", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.zenid.documentType", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.zenid.expiryDays", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.zenid.decision", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.zenid.rejectionReason", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.aml.riskLevel", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.aml.pepStatus", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.aml.sanctionsCheck", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.aml.sanctionsType", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.aml.sourceOfFunds", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.aml.occupationalRisk", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.aml.nationalityRisk", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.health.service", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.health.status", "ignore_failure": true } },
+    { "dot_expander": { "field": "onboarding.health.response_time_ms", "ignore_failure": true } },
+    {
+      "convert": {
+        "description": "6. Krok: Převod číselných hodnot na správné typy",
+        "field": "onboarding.duration_ms",
+        "type": "long",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "convert": {
+        "field": "onboarding.retry_count",
+        "type": "long",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "convert": {
+        "field": "onboarding.ux.step_duration_sec",
+        "type": "double",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "convert": {
+        "field": "onboarding.attemptsCount",
+        "type": "long",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "convert": {
+        "field": "onboarding.zenid.confidenceScore",
+        "type": "double",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "convert": {
+        "field": "onboarding.zenid.livenessScore",
+        "type": "double",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "convert": {
+        "field": "onboarding.zenid.expiryDays",
+        "type": "long",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "convert": {
+        "field": "onboarding.health.response_time_ms",
+        "type": "long",
+        "ignore_missing": true,
+        "ignore_failure": true
+      }
+    },
+    {
+      "remove": {
+        "description": "7. Krok: Odstranění pomocných polí",
+        "field": [
+          "temp_timestamp",
+          "metadata_raw"
+        ],
+        "ignore_missing": true
+      }
+    }
+  ]
+}

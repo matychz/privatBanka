@@ -54,7 +54,7 @@ Kromě `processId` budou onboarding logy v objektu `message` obsahovat:
 | **9. Souhlasy** | `.../data/submit` | `AML_DATA_SUBMITTED` | `aml.result` (OK/REVIEW), `riskLevel` |
 | **11. Podpis** | `.../otp/verify` | `CONTRACT_SIGNED` | `documentCount`, `signatureType` |
 | **13. Heslo** | `POST /v1/credentials` | `CREDENTIALS_SET` | - |
-| **15. Aktivace** | `.../token/activate` | `ONBOARDING_COMPLETED` | `productTypes`, `totalProcessTimeSec` |
+| **15. Aktivace** | `.../token/activate` | `ONBOARDING_COMPLETED` | `productTypes` |
 
 ## 5. Business Monitoring (Kibana Dashboardy)
 Systém bude poskytovat data pro tyto vizualizace:
@@ -422,8 +422,7 @@ Tato sekce obsahuje příklady logů pro každou API operaci definovanou v `API_
     "onboarding": {
       "step": "ACTIVATION",
       "status": "COMPLETED",
-      "duration_ms": 5400,
-      "totalProcessTimeSec": 900
+      "duration_ms": 5400
     }
   }
 }
@@ -490,43 +489,43 @@ Tato sekce obsahuje příklady logů pro každou API operaci definovanou v `API_
 
 ## 12. Příklady vyhledávání v Kibaně (KQL) pro Business KPI
 
-Tato sekce obsahuje konkrétní KQL (Kibana Query Language) dotazy pro filtrování logů v nástroji Kibana (Discovery, Lens, Dashboards). Dotazy využívají dvouúrovňovou strukturu `message.onboarding.*`.
+Tato sekce obsahuje konkrétní KQL (Kibana Query Language) dotazy pro filtrování logů v nástroji Kibana (Discovery, Lens, Dashboards). Dotazy využívají dvouúrovňovou strukturu `onboarding.*`.
 
 ### 12.1 Sledování konverzního funnelu (Milestones)
 - **Zahájení procesu (Top of Funnel):**
   `message.operation: "InitiateOnboarding"`
 - **Dokončení celého procesu (Conversion):**
-  `message.onboarding.step: "ACTIVATION" and message.onboarding.status: "COMPLETED"`
+  `onboarding.step: "ACTIVATION" and onboarding.status: "COMPLETED"`
 - **Uživatelé, kteří se dostali k podpisu smlouvy:**
-  `message.onboarding.step: "CONTRACT_SIGNATURE"`
+  `onboarding.step: "CONTRACT_SIGNATURE"`
 - **Uživatelé, kteří si vybrali produkty:**
-  `message.onboarding.step: "PRODUCT_SELECTION"`
+  `onboarding.step: "PRODUCT_SELECTION"`
 
 ### 12.2 Analýza identity a KYC (ZenID KPI)
 - **Automaticky schválená identita (Strait-through processing):**
-  `message.onboarding.zenid.decision: "APPROVED"`
+  `onboarding.zenid.decision: "APPROVED"`
 - **Zamítnutá identita (OCR/Liveness failure):**
-  `message.onboarding.zenid.decision: "REJECTED"`
+  `onboarding.zenid.decision: "REJECTED"`
 - **Nízké skóre důvěryhodnosti (např. pod 80 %):**
-  `message.onboarding.zenid.confidenceScore < 0.8`
+  `onboarding.zenid.confidenceScore < 0.8`
 - **Distribuce typů dokladů:**
-  `exists(message.onboarding.zenid.documentType)` (následně použít aggregaci na toto pole)
+  `onboarding.zenid.documentType : *` (následně použít aggregaci na toto pole)
 
 ### 12.3 AML a Regulační metriky
 - **Klienti s vysokým rizikem (AML High Risk):**
-  `message.onboarding.aml.riskLevel: "HIGH"`
+  `onboarding.aml.riskLevel: "HIGH"`
 - **Politicky exponované osoby (PEP):**
-  `message.onboarding.aml.pepStatus: true`
+  `onboarding.aml.pepStatus: true`
 - **Neúspěšný check sankčních seznamů:**
-  `not message.onboarding.aml.sanctionsCheck: "CLEAN"`
+  `not onboarding.aml.sanctionsCheck: "CLEAN"`
 
 ### 12.4 Provozní metriky a Latence (SLA Monitoring)
 - **Jakákoliv operace trvající déle než 5 sekund:**
-  `message.onboarding.duration_ms > 5000`
+  `onboarding.duration_ms > 5000`
 - **Pomalé ověřování identity (vliv na UX):**
-  `message.onboarding.step: "IDENTITY_CAPTURE" and message.onboarding.duration_ms > 3000`
+  `onboarding.step: "IDENTITY_CAPTURE" and onboarding.duration_ms > 3000`
 - **Chybové stavy a pády procesu:**
-  `level: "Error" or message.onboarding.status: "FAILED"`
+  `level: "Error" or onboarding.status: "FAILED"`
 
 ### 12.5 Support a Diagnostika (Tracing)
 - **Sledování celého průchodu procesem pro jednoho klienta:**
@@ -534,50 +533,50 @@ Tato sekce obsahuje konkrétní KQL (Kibana Query Language) dotazy pro filtrová
 - **Korelace technických logů napříč systémy pomocí CorrelationId:**
   `correlationId: "550e8400-e29b-41d4-a716-446655440030"`
 - **Vyhledání logů pro konkrétního e-mailového poskytovatele:**
-  `message.onboarding.emailDomain: "gmail.com"`
+  `onboarding.emailDomain: "gmail.com"`
 
 ### 12.6 Analýza opuštění procesu (Drop-off Analysis)
 - **Uživatelé, kteří dokončili e-mail, ale nezačali identitu:**
-  `message.onboarding.step: "CONTACT_EMAIL" and message.onboarding.status: "COMPLETED" and not message.onboarding.step: "IDENTITY_CAPTURE"`
+  `onboarding.step: "CONTACT_EMAIL" and onboarding.status: "COMPLETED" and not onboarding.step: "IDENTITY_CAPTURE"`
 - **Procesy, které byly zahájeny (Intro), ale nikdy nedošly k podpisu:**
-  `message.operation: "InitiateOnboarding" and not message.onboarding.step: "CONTRACT_SIGNATURE"`
+  `message.operation: "InitiateOnboarding" and not onboarding.step: "CONTRACT_SIGNATURE"`
 - **Identifikace bodu selhání pro konkrétní typ klienta:**
-  `message.onboarding.client_type: "CZ_RESIDENT" and message.onboarding.status: "FAILED"`
+  `onboarding.client_type: "CZ_RESIDENT" and onboarding.status: "FAILED"`
 
 ### 12.7 Uživatelská zkušenost (UX Metrics)
 - **Opakované pokusy o zadání OTP (potenciální problém s doručitelností):**
-  `message.onboarding.attemptsCount > 2`
+  `onboarding.attemptsCount > 2`
 - **Doba strávená v celém procesu (nad 15 minut):**
-  `message.onboarding.totalProcessTimeSec > 900`
+  /* Vypočteno v Kibaně jako rozdíl timestampů INTRO a STATUS_POLLING */
 - **Příliš dlouhá pauza mezi odesláním a verifikací OTP (v sekundách):**
-  `message.onboarding.duration_ms > 120000` (nad 2 minuty)
+  `onboarding.duration_ms > 120000` (nad 2 minuty)
 - **Distribuce mobilních zařízení pro optimalizaci UI:**
-  `exists(message.onboarding.deviceInfo)` (následně agregace přes lens)
+  `onboarding.deviceInfo : *` (následně agregace přes lens)
 
 ### 12.8 Produktové a Marketingové KPI
 - **Počet vybraných produktů v jednom procesu:**
-  `message.onboarding.step: "PRODUCT_SELECTION" and message.onboarding.products: *`
+  `onboarding.step: "PRODUCT_SELECTION" and onboarding.products: *`
 - **Zájem o spořicí účet v rámci onboardingu:**
-  `message.onboarding.products: "SAVINGS_ACCOUNT"`
+  `onboarding.products: "SAVINGS_ACCOUNT"`
 - **Konverzní poměr podle země klienta:**
-  `message.onboarding.country: "CZ"`
+  `onboarding.country: "CZ"`
 - **Vliv verze aplikace na stabilitu onboardingu:**
-  `message.onboarding.appVersion: "1.2.0"`
+  `onboarding.appVersion: "1.2.0"`
 
 ### 12.9 Specifické chyby a Troubleshooting
 - **Expirované OTP kódy (pomalá odezva uživatele nebo brány):**
-  `message.onboarding.error_code: "OTP_EXPIRED"`
+  `onboarding.error_code: "OTP_EXPIRED"`
 - **Problémy s nahráváním dokumentů (příliš velké soubory):**
-  `message.onboarding.error_code: "FILE_TOO_LARGE"`
+  `onboarding.error_code: "FILE_TOO_LARGE"`
 - **Neúspěšné ověření PIN/Hesla při nastavování:**
-  `message.onboarding.step: "CREDENTIALS_SETUP" and message.onboarding.status: "FAILED"`
+  `onboarding.step: "CREDENTIALS_SETUP" and onboarding.status: "FAILED"`
 
 ### 12.10 Demografická analýza (Non-GDPR)
 - **Rozdělení klientů podle pohlaví:**
-  `exists(message.onboarding.client.gender)` (agregace nad tímto polem)
+  `onboarding.client.gender : *` (agregace nad tímto polem)
 - **Počet mladých klientů (18-24 let):**
-  `message.onboarding.client.age_group: "18-24"`
+  `onboarding.client.age_group: "18-24"`
 - **Poměr zahraničních klientů (non-CZ):**
-  `not message.onboarding.client.nationality: "CZ"`
+  `not onboarding.client.nationality: "CZ"`
 - **Konverzní poměr žen v mobilní aplikaci:**
-  `message.onboarding.client.gender: "F" and message.onboarding.channel: "MOBILE" and message.onboarding.step: "ACTIVATION"`
+  `onboarding.client.gender: "F" and onboarding.channel: "MOBILE" and onboarding.step: "ACTIVATION"`
